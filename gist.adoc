@@ -1,0 +1,239 @@
+= NYPD Arrest Data Analysis Project
+:author: [Ayesha Saeed]
+:project-name: NYPD Arrest Data Analysis
+:tags: domain:law-enforcement, data-analysis, neo4j
+
+
+== Introduction
+
+This project aims to analyze NYPD arrest data from 2018 using Neo4j graph database and Python. By importing the dataset into Neo4j and running various Cypher queries and graph algorithms, we can gain insights into arrest trends, demographic distributions, crime hotspots, and community structuresand future crimes a person is likely to commit.
+
+== Scenario
+
+=== Explanation of Scenario
+
+Law enforcement agencies constantly seek innovative approaches to enhance crime analysis and devise effective crime prevention strategies. One such approach involves delving beyond individual arrest records to uncover patterns and connections within arrest data, shedding light on hotspot locations and demographic trends indicative of criminal activity.
+
+=== Typical Crime Patterns
+
+Analyzing NYPD arrest data from 2018 reveals recurring patterns indicative of potential criminal activity:
+
+- **Hotspot Identification**: Certain locations within a city or borough emerge as hotspots for criminal activity, with a disproportionately high number of arrests.
+- **Demographic Trends**: Individuals belonging to specific age groups, genders, and racial demographics exhibit higher likelihoods of involvement in criminal behavior.
+- **Geospatial Insights**: Combining demographic data with geographic information highlights areas where certain demographics are more likely to engage in criminal activities.
+- **Resource Allocation**: Law enforcement agencies can strategically allocate resources, focusing efforts on crime prevention and intervention in high-risk areas and among vulnerable demographics.
+
+== Solution
+
+=== Explanation of Solution
+
+Graph databases offer new methods of uncovering crime patterns and detecting criminal networks with a high level of accuracy. By leveraging graph-based analytics, law enforcement agencies can gain actionable insights from arrest data, enabling proactive crime prevention strategies and targeted interventions.
+
+=== How Graph Databases Can Help
+
+Augmenting existing crime analysis infrastructure with graph databases enables law enforcement agencies to:
+
+- Identify Hotspot Locations
+- Analyze Demographic Trends
+- Discover Influential Locations
+- Detect Criminal Networks
+
+== Data Model
+
+=== Arrest Graph Data Model
+
+image::https://github.com/AyeshaSaeed328/Neo4JArrestData/raw/main/MODEL.PNG[]
+
+== Database Setup
+
+=== Sample Data Set
+
+// Sample data loading query...
+
+== Cypher Queries
+
+==== Total Nodes in the Graph
+
+[source,cypher]
+----
+MATCH (n) RETURN count(n) AS total_nodes;
+----
+
+==== Get Arrests by Date
+
+[source,cypher]
+----
+MATCH (p:Person)-[r:ARRESTED_AT]->(l:Location)
+RETURN date(r.arrest_date) AS arrest_date, count(p) AS arrests_count
+ORDER BY arrest_date;
+----
+
+==== Get Hotspots for Arrests
+
+[source,cypher]
+----
+MATCH (l:Location)<-[:ARRESTED_AT]-(p:Person)
+RETURN l.arrest_boro AS borough, l.arrest_precinct AS precinct, count(p) AS num_arrests
+ORDER BY num_arrests DESC;
+----
+
+==== Age Category Distribution of Arrests
+
+[source,cypher]
+----
+MATCH (p:Person)-[:BELONGS_TO]->(a:AgeGroup)
+WITH a, count(p) AS arrest_count
+RETURN a.age_group AS age, arrest_count
+ORDER BY arrest_count DESC;
+----
+
+==== Arrests by Race
+
+[source,cypher]
+----
+MATCH (p:Person)
+RETURN p.perp_race AS Race, COUNT(*) AS ArrestCount
+ORDER BY ArrestCount DESC;
+----
+
+==== Arrests by Gender
+
+[source,cypher]
+----
+MATCH (a:Person)
+RETURN a.perp_sex AS Gender, COUNT(*) AS ArrestCount;
+----
+
+==== Isolated Nodes
+
+[source,cypher]
+----
+MATCH (n)
+WHERE NOT (n)--()
+RETURN count(n) AS isolated_nodes;
+----
+
+==== Total Crime Relationships
+
+[source,cypher]
+----
+MATCH ()-[r:COMMITTED]->()
+RETURN count(r) AS crime_relationships;
+----
+
+==== Number of Unique Crimes
+
+[source,cypher]
+----
+MATCH (n:Crime)
+RETURN COUNT(DISTINCT n.offense_desc) AS UniqueOffenseCount;
+----
+
+==== List of Unique Crimes
+
+[source,cypher]
+----
+MATCH (n:Crime)
+RETURN DISTINCT n.offense_desc AS Crime;
+----
+
+==== Community Detection
+
+[source,cypher]
+----
+CALL gds.louvain.stream('mygraph2')
+YIELD nodeId, communityId
+WITH communityId, COUNT(*) AS communityCount
+RETURN communityId AS crime_community, communityCount
+ORDER BY communityCount DESC
+LIMIT 20;
+----
+
+==== Degree Centrality
+
+[source,cypher]
+----
+CALL gds.degree.stream('mygraph')
+YIELD nodeId, score
+WITH gds.util.asNode(nodeId).arrest_precinct AS location, score
+RETURN location, score
+ORDER BY score DESC
+LIMIT 10;
+----
+
+==== Common Crimes Committed
+
+[source,cypher]
+----
+MATCH (p:Person)-[:COMMITTED]->(c:Crime)
+WITH c.offense_desc AS most_common_crime, count(*) AS crime_count
+RETURN most_common_crime, crime_count
+ORDER BY crime_count DESC
+LIMIT 5;
+----
+
+
+
+==== Link Prediction to identify future crimes a person is likely to commit
+
+[source,cypher]
+----
+// Prediction graph
+CALL gds.graph.project('predictionGraph',
+['Person', 'Crime'],
+[{COMMITTED: {orientation: 'UNDIRECTED'}}]
+);
+
+// Configure pipeline
+CALL gds.beta.pipeline.linkPrediction.create('crimePredictionPipeline');
+
+
+
+// Add node properties including 'perp_race', 'perp_sex', and 'age_group'
+CALL gds.beta.pipeline.linkPrediction.addNodeProperty('crimePredictionPipeline',
+'node2vec', {
+mutateProperty: 'age_group',
+embeddingDimension: 64,
+randomSeed: 42
+}) YIELD nodePropertySteps;
+
+// Feature engineering
+CALL gds.beta.pipeline.linkPrediction.addFeature('crimePredictionPipeline',
+'HADAMARD', {
+nodeProperties: ['perp_race', 'perp_sex']
+}) YIELD featureSteps;
+
+
+
+// Configure split
+CALL gds.beta.pipeline.linkPrediction.configureSplit('crimePredictionPipeline', {
+testFraction: 0.1,
+trainFraction: 0.1,
+validationFolds: 3
+}) YIELD splitConfig;
+
+// Add logistic regression model
+CALL gds.beta.pipeline.linkPrediction.addLogisticRegression('crimePredictionPipeline')
+YIELD parameterSpace;
+
+
+
+// Train the model
+CALL gds.beta.pipeline.linkPrediction.train('predictionGraph', {
+pipeline: 'crimePredictionPipeline',
+modelName: 'crimePredictionModel',
+targetRelationshipType: 'COMMITTED',
+metrics: ['AUCPR'],
+randomSeed: 42
+}) YIELD modelInfo, modelSelectionStats;
+
+// Predict potential future crimes
+CALL gds.beta.pipeline.linkPrediction.predict.mutate('predictionGraph', {
+modelName: 'crimePredictionModel',
+mutateRelationshipType: 'POTENTIAL_CRIME_PREDICTION',
+topN: 40,
+threshold: 0.5
+}) YIELD relationshipsWritten, samplingStats;
+----
+
+
